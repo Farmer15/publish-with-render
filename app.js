@@ -6,6 +6,7 @@ const passport = require("passport");
 const path = require("path");
 const cookieParser = require("cookie-parser");
 const session = require("express-session");
+const MongoStore = require("connect-mongo");
 
 const passportConfig = require("./passport/config");
 
@@ -36,9 +37,10 @@ app.use(
     resave: false,
     saveUninitialized: false,
     secret: process.env.COOKIE_SECRET,
+    store: MongoStore.create({ mongoUrl: process.env.DATABASE_URL }),
     cookie: {
       httpOnly: true,
-      secure: false,
+      secure: true,
     },
   })
 );
