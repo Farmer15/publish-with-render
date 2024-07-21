@@ -1,86 +1,123 @@
-#!/usr/bin/env node
+require("dotenv").config();
+require("./database/connection");
 
-/**
- * Module dependencies.
- */
+const express = require("express");
+const passport = require("passport");
+const path = require("path");
+const cookieParser = require("cookie-parser");
+const session = require("express-session");
+const MongoStore = require("connect-mongo");
 
-const app = require("./main");
-const debug = require("debug")("cms:server");
-const http = require("http");
+const passportConfig = require("./passport/config");
 
-/**
- * Get port from environment and store in Express.
- */
+const index = require("./routes/index");
+const login = require("./routes/login");
+const logout = require("./routes/logout");
+const join = require("./routes/join");
+const problems = require("./routes/problems");
 
-const port = normalizePort(process.env.PORT || "8000");
-app.set("port", port);
+const { isNotLoggedIn, isLoggedIn } = require("./passport/auth");
 
-/**
- * Create HTTP server.
- */
+const app = express();
 
-const server = http.createServer(app);
+app.set("view engine", "ejs");
 
-/**
- * Listen on provided port, on all network interfaces.
- */
+passportConfig();
 
-server.listen(port);
-server.on("error", onError);
-server.on("listening", onListening);
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-/**
- * Normalize a port into a number, string, or false.
- */
+app.use(express.static(__dirname + "/public"));
+app.use(express.static(path.join(__dirname, "/node_modules/codemirror")));
 
-function normalizePort(val) {
-  const port = parseInt(val, 10);
+app.use(cookieParser(process.env.COOKIE_SECRET));
 
-  if (isNaN(port)) {
-    // named pipe
-    return val;
-  }
+app.use(
+  session({
+    resave: false,
+    saveUninitialized: false,
+    secret: process.env.COOKIE_SECRET,
+    store: MongoStore.create({ mongoUrl: process.env.DATABASE_URL }),
+    cookie: {
+      httpOnly: true,
+      secure: true,
+    },
+  })
+);
 
-  if (port >= 0) {
-    // port number
-    return port;
-  }
+app.use(passport.initialize());
+app.use(passport.session());
 
-  return false;
-}
+app.use((req, res, next) => {
+  res.locals.isAuthenticated = req.isAuthenticated();
+  res.locals.user = req.user;
+  next();
+});
 
-/**
- * Event listener for HTTP server "error" event.
- */
+app.use("/", index);
+app.use("/login", isNotLoggedIn, login);
+app.use("/logout", isLoggedIn, logout);
+app.use("/join", isNotLoggedIn, join);
+app.use("/problem", isLoggedIn, problems);
 
-function onError(error) {
-  if (error.syscall !== "listen") {
-    throw error;
-  }
+app.use(function (req, res, next) {
+  const error = new Error("Not Found");
+  error.status = 404;
+  next(error);
+});
 
-  const bind = typeof port === "string" ? "Pipe " + port : "Port " + port;
-
-  // handle specific listen errors with friendly messages
-  switch (error.code) {
-    case "EACCES":
-      console.error(bind + " requires elevated privileges");
-      process.exit(1);
+app.use(function (err, req, res, next) {
+  switch (err.name) {
+    case "CastError":
+      err.status = 400;
+      err.message = "Bad Request - Invalid data format";
       break;
-    case "EADDRINUSE":
-      console.error(bind + " is already in use");
-      process.exit(1);
+    case "DivergentArrayError":
+      err.status = 400;
+      err.message = "Bad Request - Array values diverge";
+      break;
+    case "ValidationError":
+      err.status = 400;
+      err.message = "Bad Request - Validation failed";
+      break;
+    case "ObjectParameterError":
+      err.status = 400;
+      err.message = "Bad Request - Invalid object";
+      break;
+    case "ParallelSaveError":
+      err.status = 409;
+      err.message = "Conflict - Parallel save detected";
+      break;
+    case "StrictModeError":
+      err.status = 400;
+      err.message = "Bad Request - Strict mode violation";
+      break;
+    case "VersionError":
+      err.status = 409;
+      err.message = "Conflict - Version mismatch";
       break;
     default:
-      throw error;
+      err.status = 500;
+      err.message = "Internal Server Error";
+      break;
   }
-}
 
-/**
- * Event listener for HTTP server "listening" event.
- */
+  res.locals.message = err.message;
+  res.locals.error = req.app.get("env") === "development" ? err : {};
 
-function onListening() {
-  const addr = server.address();
-  const bind = typeof addr === "string" ? "pipe " + addr : "port " + addr.port;
-  debug("Listening on " + bind);
-}
+  res.status(err.status || 500);
+
+  if (err.status === 500) {
+    res.render("error", {
+      message: "Internal Server Error ",
+      error: res.locals.error,
+    });
+  } else {
+    res.render("error", {
+      message: res.locals.message,
+      error: res.locals.error,
+    });
+  }
+});
+
+module.exports = app;

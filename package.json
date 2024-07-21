@@ -7,7 +7,7 @@
     "npm": "9.5.1"
   },
   "scripts": {
-    "start": "node app.js",
+    "start": "node ./bin/www",
     "dev": "NODE_ENV=development nodemon ./bin/www",
     "task": "mocha spec --sort --exit"
   },
