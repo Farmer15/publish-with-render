@@ -1,61 +1,121 @@
+require("dotenv").config();
+require("./database/connection");
+
 const express = require("express");
+const passport = require("passport");
+const path = require("path");
+const cookieParser = require("cookie-parser");
+const session = require("express-session");
+
+const passportConfig = require("./passport/config");
+
+const index = require("./routes/index");
+const login = require("./routes/login");
+const logout = require("./routes/logout");
+const join = require("./routes/join");
+const problems = require("./routes/problems");
+
+const { isNotLoggedIn, isLoggedIn } = require("./passport/auth");
+
 const app = express();
-const port = process.env.PORT || 3001;
 
-app.get("/", (req, res) => res.type('html').send(html));
+app.set("view engine", "ejs");
 
-const server = app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+passportConfig();
 
-server.keepAliveTimeout = 120 * 1000;
-server.headersTimeout = 120 * 1000;
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-const html = `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Hello from Render!</title>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
-    <script>
-      setTimeout(() => {
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-          disableForReducedMotion: true
-        });
-      }, 500);
-    </script>
-    <style>
-      @import url("https://p.typekit.net/p.css?s=1&k=vnd5zic&ht=tk&f=39475.39476.39477.39478.39479.39480.39481.39482&a=18673890&app=typekit&e=css");
-      @font-face {
-        font-family: "neo-sans";
-        src: url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/l?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff2"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/d?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("woff"), url("https://use.typekit.net/af/00ac0a/00000000000000003b9b2033/27/a?primer=7cdcb44be4a7db8877ffa5c0007b8dd865b3bbc383831fe2ea177f62257a9191&fvd=n7&v=3") format("opentype");
-        font-style: normal;
-        font-weight: 700;
-      }
-      html {
-        font-family: neo-sans;
-        font-weight: 700;
-        font-size: calc(62rem / 16);
-      }
-      body {
-        background: white;
-      }
-      section {
-        border-radius: 1em;
-        padding: 1em;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        margin-right: -50%;
-        transform: translate(-50%, -50%);
-      }
-    </style>
-  </head>
-  <body>
-    <section>
-      Hello from Render!
-    </section>
-  </body>
-</html>
-`
+app.use(express.static(__dirname + "/public"));
+app.use(express.static(path.join(__dirname, "/node_modules/codemirror")));
+
+app.use(cookieParser(process.env.COOKIE_SECRET));
+
+app.use(
+  session({
+    resave: false,
+    saveUninitialized: false,
+    secret: process.env.COOKIE_SECRET,
+    cookie: {
+      httpOnly: true,
+      secure: false,
+    },
+  })
+);
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.use((req, res, next) => {
+  res.locals.isAuthenticated = req.isAuthenticated();
+  res.locals.user = req.user;
+  next();
+});
+
+app.use("/", index);
+app.use("/login", isNotLoggedIn, login);
+app.use("/logout", isLoggedIn, logout);
+app.use("/join", isNotLoggedIn, join);
+app.use("/problem", isLoggedIn, problems);
+
+app.use(function (req, res, next) {
+  const error = new Error("Not Found");
+  error.status = 404;
+  next(error);
+});
+
+app.use(function (err, req, res, next) {
+  switch (err.name) {
+    case "CastError":
+      err.status = 400;
+      err.message = "Bad Request - Invalid data format";
+      break;
+    case "DivergentArrayError":
+      err.status = 400;
+      err.message = "Bad Request - Array values diverge";
+      break;
+    case "ValidationError":
+      err.status = 400;
+      err.message = "Bad Request - Validation failed";
+      break;
+    case "ObjectParameterError":
+      err.status = 400;
+      err.message = "Bad Request - Invalid object";
+      break;
+    case "ParallelSaveError":
+      err.status = 409;
+      err.message = "Conflict - Parallel save detected";
+      break;
+    case "StrictModeError":
+      err.status = 400;
+      err.message = "Bad Request - Strict mode violation";
+      break;
+    case "VersionError":
+      err.status = 409;
+      err.message = "Conflict - Version mismatch";
+      break;
+    default:
+      err.status = 500;
+      err.message = "Internal Server Error";
+      break;
+  }
+
+  res.locals.message = err.message;
+  res.locals.error = req.app.get("env") === "development" ? err : {};
+
+  res.status(err.status || 500);
+
+  if (err.status === 500) {
+    res.render("error", {
+      message: "Internal Server Error ",
+      error: res.locals.error,
+    });
+  } else {
+    res.render("error", {
+      message: res.locals.message,
+      error: res.locals.error,
+    });
+  }
+});
+
+module.exports = app;
